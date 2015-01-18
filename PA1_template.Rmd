@@ -4,22 +4,198 @@ output:
   html_document:
     keep_md: true
 ---
+# Reproducible Research: Peer Assessment 1
+
+Please note for this code to work you must have downloaded the plyr, ggplot, grid, and scales packages.  This program will run the library statements for those packages.  
+Also note that this program uses the current working directory. 
+
+# Loading and preprocessing the data
+### Make sure libraries are installed
+```{r ,echo=TRUE}
+library(plyr)
+library(ggplot2)
+library(scales)
+library(grid)
+```
+
+### Import and process the data to adjust data types and check the number of rows in the data to compare to documentation provided
+```{r ,echo=TRUE}
+setInternet2(use = TRUE)
+fileurl = "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
+download.file(fileurl,destfile="activity.zip")
+rawactivity <- read.csv(unz("activity.zip","activity.csv"),header=TRUE)
+
+nrow(rawactivity)
+
+rawactivity["newdate"] <- as.Date(rawactivity$date)
+```
+Notice that the interval field is not in minutes but in hours:minutes example goes from 55 to 100 instead of 55 to 60
+```{r ,echo=TRUE}
+rawactivity["newinterval"]<-  paste0(substr(sprintf("%04d",rawactivity$interval),1,2),":",
+                                     substr(sprintf("%04d",rawactivity$interval),3,4),":00")
+rawactivity["intervaldatetime"]<-paste(rawactivity$date,rawactivity$newinterval)
+rawactivity["stepsdatetime"]<-as.POSIXct(rawactivity$intervaldatetime)
+
+activity <- rawactivity[c("steps","stepsdatetime")]
+str(activity)
+```
 
 
-## Loading and preprocessing the data
+# What is the mean total number of steps taken per day?
+
+### What is the distribution of total steps taken per day and the mean and median of steps per day
+```{r ,echo=TRUE}
+DailyStepTotal  <- aggregate(activity$steps,by=list(as.factor(format(activity$stepsdatetime, "%Y%m%d"))),
+                             FUN=sum)
+DailyStepTotal = rename(DailyStepTotal,c("Group.1"="Day","x"="TotalSteps"))
+DailyStepMean   <- aggregate(activity$steps,by=list(as.factor(format(activity$stepsdatetime, "%Y%m%d"))),
+                             FUN=mean)
+DailyStepMean = rename(DailyStepMean,c("Group.1"="Day","x"="MeanSteps"))
+DailyStepMedian <- aggregate(activity$steps,by=list(as.factor(format(activity$stepsdatetime, "%Y%m%d"))),
+                             FUN=median)
+DailyStepMedian = rename(DailyStepMedian,c("Group.1"="Day","x"="MedianSteps"))
+
+hist(DailyStepTotal$TotalSteps, breaks = 20, xlab = "Steps", main = "Histogram of Total Steps Per Day")
+
+DailyTotals  <- merge(DailyStepMean,DailyStepMedian,by="Day")
+print(DailyTotals, type = "html")
+```
 
 
+# What is the average daily activity pattern?
+### What is the average steps per interval averaged across all of the days in the data and what time of day had the most average steps
+### A time series plot over all 288 intervals reveals some interesting patterns in the data.
+```{r ,echo=TRUE}
+IntervalStepMean   <- aggregate(activity$steps,by=list(as.factor(format(activity$stepsdatetime, "%H%M"))),
+                                FUN=mean,na.rm = TRUE)
+IntervalStepMean = rename(IntervalStepMean,c("Group.1"="Interval","x"="MeanSteps"))
+ggplot(data = IntervalStepMean, aes(x=Interval,y = MeanSteps,group=1)) + 
+        geom_line()+ theme_bw()+ labs(x="Time of Day") +
+        scale_x_discrete(breaks = c("0000","0400","0800","1200","1600","2000","2355")) +
+        labs(y = expression("Average Number of Steps"))+ ggtitle("Average Number of Steps During a Day")+
+        theme(plot.title = element_text(face="bold"))
+MaxSteps <- max(IntervalStepMean$MeanSteps)
+MaxStepsInterval = IntervalStepMean[IntervalStepMean$MeanSteps == MaxSteps,]
 
-## What is mean total number of steps taken per day?
+MaxStepsTime <- paste0(substr(MaxStepsInterval$Interval,1,2),":",
+                       substr(MaxStepsInterval$Interval,3,4))
+MaxStepsfrmt <- format(max(IntervalStepMean$MeanSteps),scientific=FALSE,digits=3)
 
+```
+### The interval with the most average steps was `r MaxStepsTime` with an average of `r MaxStepsfrmt`.
 
+# Imputing missing values
+The technique used here was to apply the mean for the interval to those intervals with a missing value of NA.
 
-## What is the average daily activity pattern?
+Determine how many rows have NA values for the step column
+```{r ,echo=TRUE}
+narowscount = format(nrow(activity[is.na(activity$steps),]),big.mark=",",scientific=FALSE)
+totalrecordcount = format(nrow(activity),big.mark=",",scientific=FALSE)
+nadayscount = format(nrow(DailyStepTotal[is.na(DailyStepTotal$TotalSteps),]),big.mark=",",scientific=FALSE)
+totaldaycount = format(nrow(DailyStepTotal),big.mark=",",scientific=FALSE)
+```
+### There were `r narowscount` rows that had NA values out of `r totalrecordcount` rows.  
+### Out of `r totaldaycount` days there were `r nadayscount` days for which all of the data was missing. 
 
+Impute the NA values by merging the interval mean back to the original dataframe and assigning  
+the mean value to any steps for wich the value was NA.  
+Essentially NA step values are substituted with the mean for that interval across all days in the dataframe.  
+```{r ,echo=TRUE}
+activity["Interval"] <- format(activity$stepsdatetime, "%H%M")
+ActivityImputed  <- merge(IntervalStepMean,activity,by="Interval")
+ActivityImputed["ImputedSteps"] <- ifelse(is.na(ActivityImputed$steps),ActivityImputed$MeanSteps,ActivityImputed$steps)
+```
 
+### What is the distribution of total steps taken per day and the mean and median of steps per day  
+### based on the newly imputed steps variable
+```{r ,echo=TRUE}
+DailyStepTotalIMP  <- aggregate(ActivityImputed$ImputedSteps,by=list(as.factor(format(ActivityImputed$stepsdatetime, "%Y%m%d"))),
+                                FUN=sum)
+DailyStepTotalIMP = rename(DailyStepTotalIMP,c("Group.1"="Day","x"="TotalImputedSteps"))
+DailyStepMeanIMP   <- aggregate(ActivityImputed$ImputedSteps,by=list(as.factor(format(ActivityImputed$stepsdatetime, "%Y%m%d"))),
+                                FUN=mean)
+DailyStepMeanIMP = rename(DailyStepMeanIMP,c("Group.1"="Day","x"="MeanImputedSteps"))
+DailyStepMedianIMP <- aggregate(ActivityImputed$ImputedSteps,by=list(as.factor(format(ActivityImputed$stepsdatetime, "%Y%m%d"))),
+                                FUN=median)
+DailyStepMedianIMP = rename(DailyStepMedianIMP,c("Group.1"="Day","x"="MedianImputedSteps"))
 
-## Imputing missing values
+hist(DailyStepTotalIMP$TotalImputedSteps, breaks = 20, xlab = "Steps", main = "Histogram of Total Steps Per Day Imputed")
 
+##Merge the mean and median file created above to create a table with both and write that table out
+DailyTotalsIMP  <- merge(DailyStepMeanIMP,DailyStepMedianIMP,by="Day")
+print(DailyTotalsIMP, type = "html")
 
+DailyTotalsBoth <- merge(DailyTotals,DailyTotalsIMP,by="Day")
+print(DailyTotalsBoth, type = "html")
+```
+There is no difference in each days mean and median unless that day was NA before.  
+The reason for this is that the day was 100% populated or 100% NA.  
+For those days that were 100% NA my technique was to substitute the mean for each interval.  
+The result was that for days that were previously NA the new total steps are 10,766.  
+The mean for those days is 37.383 and median of 34.113.  
+Becuase of the 8 new days with 10,766 steps the histogram did larger concenration in that range.  
 
-## Are there differences in activity patterns between weekdays and weekends?
+# Are there differences in activity patterns between weekdays and weekends?
+Based on the graph below it appears that the activity is more consistent through the day on weekends.  
+However, the most steps on average for a given time of day still occur arount 8:00AM in the morning on weekdays.  
+```{r ,echo=TRUE}
+##does activity on weekends differ from activity during the week
+##create a weekend variable by checking to see if the day of the week starts with an S (Saturday or Sunday)
+ActivityImputed["Weekend"] <- as.factor(ifelse(substr(weekdays(as.POSIXct(ActivityImputed$stepsdatetime),
+                                                               abbreviate=TRUE),1,1)=="S","weekend","weekday"))
+WEEKEND <- ActivityImputed[ActivityImputed$Weekend == "weekend",]
+WEEKDAY <- ActivityImputed[ActivityImputed$Weekend == "weekday",]
+
+WEEKENDSTEPMEAN   <- aggregate(WEEKEND$ImputedSteps,by=list(as.factor(format(WEEKEND$stepsdatetime, "%H%M"))),
+                               FUN=mean)
+WEEKENDSTEPMEAN = rename(WEEKENDSTEPMEAN,c("Group.1"="Interval","x"="MeanSteps"))
+WEEKDAYSTEPMEAN   <- aggregate(WEEKDAY$ImputedSteps,by=list(as.factor(format(WEEKDAY$stepsdatetime, "%H%M"))),
+                               FUN=mean)
+WEEKDAYSTEPMEAN = rename(WEEKDAYSTEPMEAN,c("Group.1"="Interval","x"="MeanSteps"))
+
+##THIS FUNCTION WAS COPIED FROM THE URL http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
+## The cookbook for R 
+multiplot <- function(..., plotlist=NULL, cols) {
+        require(grid)
+        
+        # Make a list from the ... arguments and plotlist
+        plots <- c(list(...), plotlist)
+        
+        numPlots = length(plots)
+        
+        # Make the panel
+        plotCols = cols                          # Number of columns of plots
+        plotRows = ceiling(numPlots/plotCols) # Number of rows needed, calculated from # of cols
+        
+        # Set up the page
+        grid.newpage()
+        pushViewport(viewport(layout = grid.layout(plotRows, plotCols)))
+        vplayout <- function(x, y)
+                viewport(layout.pos.row = x, layout.pos.col = y)
+        
+        # Make each plot, in the correct location
+        for (i in 1:numPlots) {
+                curRow = ceiling(i/plotCols)
+                curCol = (i-1) %% plotCols + 1
+                print(plots[[i]], vp = vplayout(curRow, curCol ))
+        }
+        
+}
+
+p1 <-
+ggplot(data = WEEKENDSTEPMEAN, aes(x=Interval,y = MeanSteps,group=1)) + 
+        geom_line()+ theme_bw()+ labs(x="Time of Day") +
+        scale_x_discrete(breaks = c("0000","0400","0800","1200","1600","2000","2355")) +
+        labs(y = expression("Average Number of Steps"))+ ggtitle("Average Number of Steps During a Weekend")+
+        ylim(0,250) +
+        theme(plot.title = element_text(face="bold"))
+p2 <-
+ggplot(data = WEEKDAYSTEPMEAN, aes(x=Interval,y = MeanSteps,group=1)) + 
+        geom_line()+ theme_bw()+ labs(x="Time of Day") +
+        scale_x_discrete(breaks = c("0000","0400","0800","1200","1600","2000","2355")) +
+        labs(y = expression("Average Number of Steps"))+ ggtitle("Average Number of Steps During a Weekday")+
+        ylim(0,250) +
+        theme(plot.title = element_text(face="bold"))
+multiplot(p1, p2, cols=1)
+```
+
